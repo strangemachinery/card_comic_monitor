@@ -5,6 +5,7 @@ Commands:
   sync-watchlist   ensure watchlist items exist in the DB (create + crosswalk)
   snapshot         fetch current prices from enabled sources and upsert them
   show             print the most recent snapshot per item (sanity check)
+  movers           rank items by % price change over a look-back period
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import sys
 from .config import load_settings
 from .db import connect
 from .migrate import run_migrations
+from .movers import PERIODS, query_movers
 from .repository import ensure_item, targets_for_source, upsert_snapshots
 from .sources import available_sources, build_source
 from .watchlist import load_watchlist
@@ -83,6 +85,37 @@ def cmd_show(args, settings) -> int:
     return 0
 
 
+def cmd_movers(args, settings) -> int:
+    period = args.period
+    exclude = () if args.all_sources else ("stub",)
+    with connect(settings) as conn:
+        rows = query_movers(conn, period, exclude_sources=exclude)
+    if not rows:
+        print(
+            f"No items have data spanning {period}. "
+            "Run `ccm snapshot` daily to build history, or try a shorter period."
+        )
+        return 0
+    days = PERIODS[period].days
+    print(f"\nMovers — {period}  ({days} days)\n")
+    for row in rows:
+        sign = "+" if row.pct_change >= 0 else ""
+        start = f"${row.start_cents / 100:,.2f}"
+        end   = f"${row.end_cents   / 100:,.2f}"
+        bar   = _spark(row.pct_change)
+        print(f"  {sign}{row.pct_change:>6.1f}%  {bar}  {row.title:<30} {row.source:<12} {start} → {end}")
+    print()
+    return 0
+
+
+def _spark(pct: float) -> str:
+    """A tiny ASCII bar: ▓▓▓░░░ for positive, ░░░▓▓▓ for negative."""
+    blocks = min(abs(round(pct / 5)), 6)
+    if pct >= 0:
+        return ("▓" * blocks).ljust(6)
+    return ("░" * blocks).ljust(6)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ccm", description=__doc__)
     parser.add_argument(
@@ -110,6 +143,22 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("show", help="print the latest snapshot per item").set_defaults(
         func=cmd_show
     )
+
+    p_mov = sub.add_parser("movers", help="rank items by % price change over a period")
+    p_mov.add_argument(
+        "--period", "-p",
+        default="1w",
+        choices=list(PERIODS),
+        help="look-back window (default: 1w)",
+    )
+    p_mov.add_argument(
+        "--all-sources",
+        action="store_true",
+        default=False,
+        help="include stub/demo source (excluded by default)",
+    )
+    p_mov.set_defaults(func=cmd_movers)
+
     return parser
 
 
