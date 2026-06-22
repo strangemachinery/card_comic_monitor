@@ -55,7 +55,14 @@ class PokemontcgSource:
         self.limiter = limiter
         self.api_key = api_key or os.getenv("POKEMONTCG_API_KEY", "")
 
-    def _fetch_page(self, page: int) -> dict | None:
+    def _fetch_page(self, page: int) -> dict | None | type[StopIteration]:
+        """Fetch one page.
+
+        Returns:
+          dict           — success, use the data
+          None           — transient error (5xx / network blip), skip this page
+          StopIteration  — fatal error (4xx, rate-limit), abort the whole scan
+        """
         url = (
             f"{_BASE_URL}?page={page}&pageSize={_PAGE_SIZE}"
             f"&select={_SELECT}"
@@ -72,28 +79,39 @@ class PokemontcgSource:
         except urllib.error.HTTPError as exc:
             if exc.code == 429:
                 logger.warning("pokemontcg rate limited at page %s; stopping", page)
-            else:
-                logger.warning("pokemontcg HTTP %s at page %s", exc.code, page)
-            return None
+                return StopIteration
+            if exc.code >= 500:
+                logger.warning("pokemontcg server error %s at page %s; skipping", exc.code, page)
+                return None  # transient — skip this page, keep going
+            logger.warning("pokemontcg HTTP %s at page %s; stopping", exc.code, page)
+            return StopIteration
         except OSError as exc:
-            logger.warning("pokemontcg network error at page %s: %s", page, exc)
-            return None
+            logger.warning("pokemontcg network error at page %s: %s; skipping", page, exc)
+            return None  # transient — skip this page, keep going
 
     def discover(self) -> Iterator[MarketSnapshot]:
         """Yield a MarketSnapshot for every liquid printing across all pages."""
         page = 1
+        total = None
         while True:
             self.limiter.acquire()
-            payload = self._fetch_page(page)
-            if not payload:
+            result = self._fetch_page(page)
+            if result is StopIteration:
                 return
-            cards = payload.get("data") or []
+            if result is None:
+                if total is None:
+                    return  # failed before any successful page; give up
+                # Transient error mid-scan — skip this page and continue.
+                page += 1
+                if page * _PAGE_SIZE > total + _PAGE_SIZE:
+                    return
+                continue
+            cards = result.get("data") or []
             if not cards:
                 return
+            total = result.get("totalCount", 0)
             for card in cards:
                 yield from self._snapshots_for_card(card)
-            # Stop once we've consumed the last page.
-            total = payload.get("totalCount", 0)
             if page * _PAGE_SIZE >= total:
                 return
             page += 1

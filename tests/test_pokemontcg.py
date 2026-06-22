@@ -112,8 +112,25 @@ def test_discover_stops_on_rate_limit(mock_urlopen):
 
 @patch("urllib.request.urlopen")
 def test_discover_stops_on_network_error(mock_urlopen):
+    # First call fails with a network error (skip), second page also fails → loop exits.
     mock_urlopen.side_effect = OSError("connection reset")
     assert list(_src().discover()) == []
+
+
+@patch("urllib.request.urlopen")
+def test_discover_skips_500_page_and_continues(mock_urlopen):
+    """A 500 on one page should skip it and continue scanning."""
+    good_card = _card("a-1", "Charizard", "Base", {"holofoil": {"market": 10.0}})
+    good_page = _page([good_card], total=2)
+    mock_urlopen.side_effect = [
+        _make_response(good_page),  # page 1: OK
+        _http_error(500),           # page 2: server error → skip
+        # discover exits because page 2 skip + total=2 guard triggers
+    ]
+    # We get the cards from page 1 and gracefully skip page 2.
+    snaps = list(_src().discover())
+    assert len(snaps) == 1
+    assert snaps[0].name == "Charizard"
 
 
 @patch("urllib.request.urlopen")
