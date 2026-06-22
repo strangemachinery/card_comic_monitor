@@ -1,18 +1,21 @@
 """tcgapi.dev source worker (recommended default card source).
 
-Resolves prices for cards by their TCGplayer product id via the bulk endpoint,
-so a whole watchlist of cards costs only a handful of API calls (quota-friendly
-on the free 100 req/day tier).
+Resolves prices for cards by their TCGplayer product id via the per-card
+endpoint on the free 100-req/day tier.
 
 API: https://tcgapi.dev   Auth: `X-API-Key` header (TCGAPI_API_KEY env var)
-  POST /v1/bulk/resolve/tcgplayer
-    body:  {"ids": [187172, 187171, ...]}   (integers)
+  GET /v1/cards/tcgplayer/{product_id}
     response envelope:
-      data.resolved[]   -- list of {tcgplayer_id, card:{...}, prices:[{printing, market_price, low_price}]}
-      data.not_found[]  -- IDs with no match
-      meta.credits_consumed
+      data.tcgplayer_id     -- the product ID
+      data.total_listings   -- active listing count
+      data.prices[]         -- [{printing, market_price, low_price, ...}]
+      rate_limit.daily_remaining
 
-  Rate limit: HTTP 429 with X-RateLimit-Reset / Retry-After when exhausted.
+  Rate limit: HTTP 429 when exhausted; daily_remaining echoed in every response.
+
+  Note: the bulk POST endpoint (/v1/bulk/resolve/tcgplayer) requires a paid
+  "Starter" tier. The per-card GET is free (100 req/day). With a small curated
+  watchlist this costs 1 credit per card per run.
 """
 
 from __future__ import annotations
@@ -30,13 +33,8 @@ from .base import Source
 
 logger = logging.getLogger(__name__)
 
-_BULK_URL = "https://api.tcgapi.dev/v1/bulk/resolve/tcgplayer"
+_SINGLE_URL = "https://api.tcgapi.dev/v1/cards/tcgplayer/{}"
 
-# Max TCGplayer product ids per bulk request (chunked to be safe).
-_BATCH_SIZE = 100
-
-# Field name constants (confirmed from live API shape).
-_PRODUCT_ID_KEYS = ("tcgplayer_id", "tcgplayerId", "product_id", "productId", "id")
 _MARKET_KEYS = ("market_price", "market", "price")
 _LOW_KEYS = ("low_price", "low", "lowPrice")
 _LISTINGS_KEYS = ("total_listings", "listings", "num_listings", "totalListings")
@@ -65,37 +63,11 @@ def _to_int(value: object) -> int | None:
         return None
 
 
-def _extract_records(payload: object) -> list[dict]:
-    """Pull resolved items from the bulk-resolve response envelope.
-
-    Handles the documented shape (data.resolved[]) and also falls back to
-    simpler envelopes for forward-compatibility.
-    """
-    if isinstance(payload, dict):
-        data = payload.get("data")
-        if isinstance(data, dict):
-            # Primary: data.resolved (bulk resolve endpoint)
-            resolved = data.get("resolved")
-            if isinstance(resolved, list):
-                return [r for r in resolved if isinstance(r, dict)]
-        elif isinstance(data, list):
-            return [r for r in data if isinstance(r, dict)]
-        # Flat envelopes (other endpoints / future API versions)
-        for key in ("resolved", "results", "cards", "products"):
-            val = payload.get(key)
-            if isinstance(val, list):
-                return [r for r in val if isinstance(r, dict)]
-    if isinstance(payload, list):
-        return [r for r in payload if isinstance(r, dict)]
-    return []
-
-
 def _snapshot_from_record(record: dict, item_id: int) -> PriceSnapshot | None:
-    """Build a raw-condition market snapshot from one resolved item, or None.
+    """Build a raw-condition snapshot from one card data object, or None.
 
     Prices live in record["prices"] as [{printing, market_price, low_price}].
-    We prefer the "Normal" printing; fall back to the first entry if absent.
-    For flat records (non-bulk endpoints) we read price fields directly.
+    Prefers "Normal" printing; falls back to the first entry (e.g. "Holofoil").
     """
     prices_list = record.get("prices")
     if isinstance(prices_list, list) and prices_list:
@@ -105,7 +77,7 @@ def _snapshot_from_record(record: dict, item_id: int) -> PriceSnapshot | None:
             prices_list[0] if isinstance(prices_list[0], dict) else None,
         )
     else:
-        price_rec = record  # flat record path
+        price_rec = record  # flat record fallback
 
     if price_rec is None:
         return None
@@ -119,14 +91,9 @@ def _snapshot_from_record(record: dict, item_id: int) -> PriceSnapshot | None:
         market_cents=market,
         low_cents=_to_cents(_first(price_rec, _LOW_KEYS)),
         volume=_to_int(_first(record, _LISTINGS_KEYS)),
-        condition="raw",  # TCG market price is ungraded Near Mint
+        condition="raw",  # TCG market price = ungraded Near Mint
         grade="",
     )
-
-
-def _chunks(seq: list, size: int) -> Iterator[list]:
-    for i in range(0, len(seq), size):
-        yield seq[i : i + size]
 
 
 class TcgapiSource(Source):
@@ -140,59 +107,49 @@ class TcgapiSource(Source):
                 "TCGAPI_API_KEY is not set. Get a free key at https://tcgapi.dev"
             )
 
-    def _bulk_resolve(self, product_ids: list[str]) -> list[dict]:
-        # API expects integer IDs
-        body = json.dumps({"ids": [int(pid) for pid in product_ids]}).encode()
+    def _fetch_card(self, product_id: str) -> dict | None:
+        """GET /v1/cards/tcgplayer/{id}; returns the data object or None."""
         req = urllib.request.Request(
-            _BULK_URL,
-            data=body,
-            method="POST",
+            _SINGLE_URL.format(product_id),
             headers={
                 "X-API-Key": self.api_key,
-                "Content-Type": "application/json",
                 "User-Agent": "card-comic-monitor/0.1",
             },
         )
         with urllib.request.urlopen(req, timeout=20) as resp:
-            return _extract_records(json.loads(resp.read().decode()))
+            payload = json.loads(resp.read().decode())
+        data = payload.get("data")
+        return data if isinstance(data, dict) else None
 
     def fetch(self, targets: Iterable[FetchTarget]) -> Iterator[PriceSnapshot]:
-        # Map TCGplayer product id -> canonical item_id for this run.
         by_pid: dict[str, int] = {t.source_native_id: t.item_id for t in targets}
         if not by_pid:
             return
 
-        for batch in _chunks(list(by_pid), _BATCH_SIZE):
+        for pid, item_id in by_pid.items():
             self.limiter.acquire()
             try:
-                records = self._bulk_resolve(batch)
+                record = self._fetch_card(pid)
             except urllib.error.HTTPError as exc:
                 if exc.code in (401, 403):
                     raise RuntimeError(
                         f"tcgapi: auth failed ({exc.code}) -- check TCGAPI_API_KEY"
                     ) from exc
                 if exc.code == 429:
-                    # Quota exhausted: stop cleanly rather than hammering.
                     logger.warning("tcgapi: rate limited (429); stopping this run")
                     return
-                logger.warning("tcgapi: HTTP %d for batch, skipping", exc.code)
+                logger.warning("tcgapi: HTTP %d for product_id %s, skipping", exc.code, pid)
                 continue
             except OSError as exc:
-                logger.warning("tcgapi: network error for batch: %s", exc)
+                logger.warning("tcgapi: network error for product_id %s: %s", pid, exc)
                 continue
 
-            returned: set[str] = set()
-            for record in records:
-                pid = _first(record, _PRODUCT_ID_KEYS)
-                pid = None if pid is None else str(pid)
-                item_id = by_pid.get(pid) if pid is not None else None
-                if item_id is None:
-                    continue
-                returned.add(pid)
-                snap = _snapshot_from_record(record, item_id)
-                if snap is not None:
-                    yield snap
+            if record is None:
+                logger.info("tcgapi: no data returned for product_id %s", pid)
+                continue
 
-            missing = set(batch) - returned
-            if missing:
-                logger.info("tcgapi: no price for %d id(s) in batch", len(missing))
+            snap = _snapshot_from_record(record, item_id)
+            if snap is not None:
+                yield snap
+            else:
+                logger.info("tcgapi: no market price for product_id %s", pid)

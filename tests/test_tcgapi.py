@@ -1,18 +1,13 @@
 """Tests for the tcgapi.dev source worker (no network, no API key needed).
 
-Payloads mirror the confirmed live API shape:
-  POST /v1/bulk/resolve/tcgplayer
-  request:  {"ids": [187172, ...]}
-  response: {
+Payloads mirror the confirmed live API shape from GET /v1/cards/tcgplayer/{id}:
+  {
     "data": {
-      "resolved": [
-        {"tcgplayer_id": 187172,
-         "card": {...},
-         "prices": [{"printing": "Normal", "market_price": 10.0, "low_price": 8.0}]}
-      ],
-      "not_found": []
+      "tcgplayer_id": 42382,
+      "total_listings": 110,
+      "prices": [{"printing": "Holofoil", "market_price": 630.39, "low_price": 192.99}]
     },
-    "meta": {"credits_consumed": 1}
+    "rate_limit": {"daily_limit": 100, "daily_remaining": 99, ...}
   }
 """
 
@@ -28,8 +23,6 @@ from card_comic_monitor.models import FetchTarget
 from card_comic_monitor.ratelimit import limiter_for
 from card_comic_monitor.sources.tcgapi import (
     TcgapiSource,
-    _chunks,
-    _extract_records,
     _snapshot_from_record,
     _to_cents,
     _to_int,
@@ -44,23 +37,16 @@ def _make_response(payload) -> MagicMock:
     return resp
 
 
-def _bulk_payload(resolved: list[dict], not_found: list = None) -> dict:
-    """Build a correctly-shaped bulk resolve response."""
-    return {
-        "data": {"resolved": resolved, "not_found": not_found or []},
-        "meta": {"credits_consumed": len(resolved)},
-    }
-
-
-def _resolved_item(tcgplayer_id, market_price, low_price=None, total_listings=None, printing="Normal"):
-    """Build one resolved item in the documented bulk-resolve format."""
+def _card_payload(tcgplayer_id, market_price, low_price=None, total_listings=None,
+                  printing="Holofoil") -> dict:
+    """Build a correctly-shaped GET /v1/cards/tcgplayer/{id} response."""
     price = {"printing": printing, "market_price": market_price}
     if low_price is not None:
         price["low_price"] = low_price
-    item = {"tcgplayer_id": tcgplayer_id, "card": {"name": "Test Card"}, "prices": [price]}
+    data = {"tcgplayer_id": tcgplayer_id, "prices": [price]}
     if total_listings is not None:
-        item["total_listings"] = total_listings
-    return item
+        data["total_listings"] = total_listings
+    return {"data": data, "rate_limit": {"daily_limit": 100, "daily_remaining": 97}}
 
 
 def _http_error(code: int) -> urllib.error.HTTPError:
@@ -93,63 +79,39 @@ def test_to_int(value, expected):
     assert _to_int(value) == expected
 
 
-def test_extract_records_bulk_resolve_envelope():
-    payload = _bulk_payload([{"tcgplayer_id": 1, "prices": []}])
-    assert _extract_records(payload) == [{"tcgplayer_id": 1, "prices": []}]
-
-
-def test_extract_records_flat_data_list():
-    # Fallback: data is a list (other endpoints)
-    assert _extract_records({"data": [{"a": 1}]}) == [{"a": 1}]
-
-
-def test_extract_records_other_envelopes():
-    assert _extract_records({"results": [{"b": 2}]}) == [{"b": 2}]
-    assert _extract_records({"nope": 1}) == []
-    assert _extract_records("garbage") == []
-    assert _extract_records([{"a": 1}]) == [{"a": 1}]
-
-
-def test_chunks():
-    assert list(_chunks([1, 2, 3, 4, 5], 2)) == [[1, 2], [3, 4], [5]]
-    assert list(_chunks([], 2)) == []
-
-
 def test_snapshot_from_record_reads_nested_prices():
-    rec = _resolved_item(tcgplayer_id=6910, market_price=32.50, low_price=28.0, total_listings=42)
-    snap = _snapshot_from_record(rec, item_id=1)
-    assert snap.market_cents == 3250
-    assert snap.low_cents == 2800
-    assert snap.volume == 42
+    record = {"tcgplayer_id": 42382, "total_listings": 110,
+              "prices": [{"printing": "Holofoil", "market_price": 630.39, "low_price": 192.99}]}
+    snap = _snapshot_from_record(record, item_id=1)
+    assert snap.market_cents == 63039
+    assert snap.low_cents == 19299
+    assert snap.volume == 110
     assert snap.condition == "raw" and snap.grade == ""
 
 
 def test_snapshot_from_record_prefers_normal_printing():
-    rec = {
+    record = {
         "tcgplayer_id": 1,
         "prices": [
             {"printing": "Holofoil", "market_price": 50.0},
             {"printing": "Normal", "market_price": 10.0, "low_price": 8.0},
         ],
     }
-    snap = _snapshot_from_record(rec, item_id=1)
+    snap = _snapshot_from_record(record, item_id=1)
     assert snap.market_cents == 1000
     assert snap.low_cents == 800
 
 
 def test_snapshot_from_record_falls_back_to_first_printing():
-    rec = {
-        "tcgplayer_id": 1,
-        "prices": [{"printing": "Holofoil", "market_price": 50.0}],
-    }
-    snap = _snapshot_from_record(rec, item_id=1)
+    record = {"tcgplayer_id": 1,
+              "prices": [{"printing": "Holofoil", "market_price": 50.0}]}
+    snap = _snapshot_from_record(record, item_id=1)
     assert snap.market_cents == 5000
 
 
-def test_snapshot_from_record_flat_record_fallback():
-    # Non-bulk endpoint shape: price fields directly on record
-    rec = {"tcgplayer_id": 1, "market_price": 32.50, "low_price": 28.0}
-    snap = _snapshot_from_record(rec, item_id=1)
+def test_snapshot_from_record_flat_fallback():
+    # Non-nested path: price fields directly on record
+    snap = _snapshot_from_record({"market_price": 32.50, "low_price": 28.0}, item_id=1)
     assert snap.market_cents == 3250
     assert snap.low_cents == 2800
 
@@ -162,12 +124,11 @@ def test_snapshot_from_record_none_without_market_price():
 # --- fetch() ---------------------------------------------------------------
 
 @patch("urllib.request.urlopen")
-def test_fetch_happy_path_maps_pid_to_item(mock_urlopen):
-    mock_urlopen.return_value = _make_response(_bulk_payload([
-        _resolved_item(111, 10.00, 8.0, total_listings=5),
-        _resolved_item(222, 25.50),
-    ]))
-
+def test_fetch_happy_path(mock_urlopen):
+    mock_urlopen.side_effect = [
+        _make_response(_card_payload(111, 10.00, 8.0, total_listings=5)),
+        _make_response(_card_payload(222, 25.50)),
+    ]
     src = _src()
     targets = [
         FetchTarget(item_id=1, source_native_id="111"),
@@ -178,41 +139,26 @@ def test_fetch_happy_path_maps_pid_to_item(mock_urlopen):
     assert snaps[1].low_cents == 800
     assert snaps[1].volume == 5
     assert snaps[2].market_cents == 2550
-    assert snaps[2].low_cents is None  # absent in payload
+    assert snaps[2].low_cents is None
 
 
 @patch("urllib.request.urlopen")
-def test_fetch_request_body_uses_ids_key(mock_urlopen):
-    """Verify request body uses {"ids": [...]} with integer IDs."""
-    mock_urlopen.return_value = _make_response(_bulk_payload([]))
-    src = _src()
-    targets = [FetchTarget(item_id=1, source_native_id="111")]
-    list(src.fetch(targets))
-
-    call_args = mock_urlopen.call_args[0][0]
-    sent_body = json.loads(call_args.data.decode())
-    assert "ids" in sent_body
-    assert sent_body["ids"] == [111]  # integers, not strings
-
-
-@patch("urllib.request.urlopen")
-def test_fetch_batches_into_one_call(mock_urlopen):
-    # 3 targets should still be a single bulk request (well under batch size).
-    mock_urlopen.return_value = _make_response(_bulk_payload([]))
+def test_fetch_makes_one_request_per_card(mock_urlopen):
+    mock_urlopen.return_value = _make_response({"data": None})
     src = _src()
     targets = [FetchTarget(item_id=i, source_native_id=str(i)) for i in range(3)]
     list(src.fetch(targets))
-    assert mock_urlopen.call_count == 1
+    assert mock_urlopen.call_count == 3
 
 
 @patch("urllib.request.urlopen")
-def test_fetch_skips_unknown_returned_ids(mock_urlopen):
-    mock_urlopen.return_value = _make_response(_bulk_payload([
-        _resolved_item(999, 5.0),  # not in our targets
-    ]))
+def test_fetch_uses_get_with_id_in_url(mock_urlopen):
+    mock_urlopen.return_value = _make_response(_card_payload(42382, 630.39))
     src = _src()
-    snaps = list(src.fetch([FetchTarget(item_id=1, source_native_id="111")]))
-    assert snaps == []
+    list(src.fetch([FetchTarget(item_id=1, source_native_id="42382")]))
+    req = mock_urlopen.call_args[0][0]
+    assert "42382" in req.full_url
+    assert req.data is None  # GET has no body
 
 
 @patch("urllib.request.urlopen")
@@ -220,6 +166,14 @@ def test_fetch_empty_targets_no_call(mock_urlopen):
     src = _src()
     assert list(src.fetch([])) == []
     mock_urlopen.assert_not_called()
+
+
+@patch("urllib.request.urlopen")
+def test_fetch_skips_null_data(mock_urlopen):
+    mock_urlopen.return_value = _make_response({"data": None})
+    src = _src()
+    snaps = list(src.fetch([FetchTarget(item_id=1, source_native_id="111")]))
+    assert snaps == []
 
 
 @pytest.mark.parametrize("code", [401, 403])
@@ -236,7 +190,7 @@ def test_fetch_stops_on_rate_limit(mock_urlopen):
     mock_urlopen.side_effect = _http_error(429)
     src = _src()
     snaps = list(src.fetch([FetchTarget(item_id=1, source_native_id="111")]))
-    assert snaps == []  # 429 -> clean stop, no exception
+    assert snaps == []
 
 
 @patch("urllib.request.urlopen")
