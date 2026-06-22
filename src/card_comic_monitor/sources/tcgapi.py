@@ -1,22 +1,18 @@
 """tcgapi.dev source worker (recommended default card source).
 
-Resolves prices for cards by their TCGplayer product id -- which is exactly the
-identity anchor docs/ARCHITECTURE.md uses for cards -- via the bulk endpoint, so
-a whole watchlist of cards costs only a handful of API calls (quota-friendly on
-the free 100 req/day tier).
+Resolves prices for cards by their TCGplayer product id via the bulk endpoint,
+so a whole watchlist of cards costs only a handful of API calls (quota-friendly
+on the free 100 req/day tier).
 
 API: https://tcgapi.dev   Auth: `X-API-Key` header (TCGAPI_API_KEY env var)
-  POST /v1/bulk/resolve/tcgplayer   body: TCGplayer product ids -> prices
-  Rate limit: HTTP 429 with X-RateLimit-Reset / Retry-After when exhausted.
+  POST /v1/bulk/resolve/tcgplayer
+    body:  {"ids": [187172, 187171, ...]}   (integers)
+    response envelope:
+      data.resolved[]   -- list of {tcgplayer_id, card:{...}, prices:[{printing, market_price, low_price}]}
+      data.not_found[]  -- IDs with no match
+      meta.credits_consumed
 
-NOTE -- field names to confirm against the live docs / first real response:
-  The exact request-body key and response envelope/field names are documented
-  loosely on tcgapi.dev (whose pages block automated reads). To stay robust the
-  parsing below accepts several likely spellings (see _PRODUCT_ID_KEYS /
-  _MARKET_KEYS / etc.) and prices are assumed to be USD dollars (floats),
-  converted to integer cents. If the real payload differs, the only change
-  needed is in the small `_extract_*` helpers -- the rest of the pipeline is
-  untouched. This mirrors how sources/pricecharting.py documents its fields.
+  Rate limit: HTTP 429 with X-RateLimit-Reset / Retry-After when exhausted.
 """
 
 from __future__ import annotations
@@ -39,7 +35,7 @@ _BULK_URL = "https://tcgapi.dev/v1/bulk/resolve/tcgplayer"
 # Max TCGplayer product ids per bulk request (chunked to be safe).
 _BATCH_SIZE = 100
 
-# Tolerated key spellings for the fields we read (see module NOTE).
+# Field name constants (confirmed from live API shape).
 _PRODUCT_ID_KEYS = ("tcgplayer_id", "tcgplayerId", "product_id", "productId", "id")
 _MARKET_KEYS = ("market_price", "market", "price")
 _LOW_KEYS = ("low_price", "low", "lowPrice")
@@ -70,27 +66,58 @@ def _to_int(value: object) -> int | None:
 
 
 def _extract_records(payload: object) -> list[dict]:
-    """Pull the list of card dicts out of whatever envelope the API returns."""
-    if isinstance(payload, list):
-        return [r for r in payload if isinstance(r, dict)]
+    """Pull resolved items from the bulk-resolve response envelope.
+
+    Handles the documented shape (data.resolved[]) and also falls back to
+    simpler envelopes for forward-compatibility.
+    """
     if isinstance(payload, dict):
-        for key in ("data", "results", "cards", "products"):
+        data = payload.get("data")
+        if isinstance(data, dict):
+            # Primary: data.resolved (bulk resolve endpoint)
+            resolved = data.get("resolved")
+            if isinstance(resolved, list):
+                return [r for r in resolved if isinstance(r, dict)]
+        elif isinstance(data, list):
+            return [r for r in data if isinstance(r, dict)]
+        # Flat envelopes (other endpoints / future API versions)
+        for key in ("resolved", "results", "cards", "products"):
             val = payload.get(key)
             if isinstance(val, list):
                 return [r for r in val if isinstance(r, dict)]
+    if isinstance(payload, list):
+        return [r for r in payload if isinstance(r, dict)]
     return []
 
 
 def _snapshot_from_record(record: dict, item_id: int) -> PriceSnapshot | None:
-    """Build a raw-condition market snapshot from one API record, or None."""
-    market = _to_cents(_first(record, _MARKET_KEYS))
+    """Build a raw-condition market snapshot from one resolved item, or None.
+
+    Prices live in record["prices"] as [{printing, market_price, low_price}].
+    We prefer the "Normal" printing; fall back to the first entry if absent.
+    For flat records (non-bulk endpoints) we read price fields directly.
+    """
+    prices_list = record.get("prices")
+    if isinstance(prices_list, list) and prices_list:
+        price_rec = next(
+            (p for p in prices_list
+             if isinstance(p, dict) and p.get("printing", "").lower() == "normal"),
+            prices_list[0] if isinstance(prices_list[0], dict) else None,
+        )
+    else:
+        price_rec = record  # flat record path
+
+    if price_rec is None:
+        return None
+
+    market = _to_cents(_first(price_rec, _MARKET_KEYS))
     if market is None:
         return None
     return PriceSnapshot(
         item_id=item_id,
         source=TcgapiSource.name,
         market_cents=market,
-        low_cents=_to_cents(_first(record, _LOW_KEYS)),
+        low_cents=_to_cents(_first(price_rec, _LOW_KEYS)),
         volume=_to_int(_first(record, _LISTINGS_KEYS)),
         condition="raw",  # TCG market price is ungraded Near Mint
         grade="",
@@ -114,7 +141,8 @@ class TcgapiSource(Source):
             )
 
     def _bulk_resolve(self, product_ids: list[str]) -> list[dict]:
-        body = json.dumps({"product_ids": product_ids}).encode()
+        # API expects integer IDs
+        body = json.dumps({"ids": [int(pid) for pid in product_ids]}).encode()
         req = urllib.request.Request(
             _BULK_URL,
             data=body,
