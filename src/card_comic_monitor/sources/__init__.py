@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from ..ratelimit import limiter_for
 from .base import Source
+from .pricecharting import PricechartingSource
 from .stub import StubSource
 
-# Registry of available sources. Real vendors (pricecharting, scrydex,
-# gocollect, ...) get added here as they are implemented in Week 2-3.
+# Registry of available sources. Real vendors are added here as implemented.
+# scrydex and gocollect are next (Week 2-3).
 _FACTORIES: dict[str, type[Source]] = {
     StubSource.name: StubSource,
+    PricechartingSource.name: PricechartingSource,
 }
 
 

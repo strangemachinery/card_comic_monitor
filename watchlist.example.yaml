@@ -1,10 +1,16 @@
 # Curated watchlist. Copy to watchlist.yaml and edit.
 #
 # Each item is one logical collectible with per-source native ids under
-# `sources`. The `stub` ids are arbitrary strings that drive the offline demo
-# source; real ids (e.g. a PriceCharting product id) go alongside as you wire
-# up vendors. Keeping this list small respects tight API quotas (e.g. GoCollect
-# Pro ~100 calls/day) — see docs/DECISIONS.md.
+# `sources`. The `stub` ids drive the offline demo source (no key needed).
+# Wire in real ids alongside them as you activate each vendor.
+#
+# Finding PriceCharting product ids:
+#   Search for your item on pricecharting.com; the id is the number in the URL,
+#   e.g. https://www.pricecharting.com/game/pokemon/charizard#... → id is "6910"
+#   via the API: GET https://www.pricecharting.com/api/products?q=charizard+base&t=TOKEN
+#
+# Keeping this list small respects tight API quotas (GoCollect Pro ~100/day).
+# See docs/DECISIONS.md for the full quota breakdown.
 
 items:
   - title: "Charizard"
@@ -15,7 +21,7 @@ items:
     variant: "Unlimited Holo"
     sources:
       stub: "demo-pokemon-charizard-base-unlimited"
-      # pricecharting: "6910"
+      pricecharting: "6910"   # https://www.pricecharting.com/game/pokemon/charizard
 
   - title: "Monkey D. Luffy (Leader)"
     kind: card
@@ -24,6 +30,7 @@ items:
     number: "OP01-001"
     sources:
       stub: "demo-onepiece-luffy-op01-001"
+      # pricecharting: "<id>"  # look up on pricecharting.com
 
   - title: "Son Goku"
     kind: card
@@ -32,6 +39,7 @@ items:
     number: "FB01-001"
     sources:
       stub: "demo-dragonball-goku-fb01-001"
+      # pricecharting: "<id>"
 
   - title: "The Amazing Spider-Man"
     kind: comic
@@ -41,4 +49,5 @@ items:
     is_key_issue: true
     sources:
       stub: "demo-comic-asm-300-cgc98"
-      # gocollect: "12345"
+      # pricecharting: "<id>"   # comics are covered by the same token
+      # gocollect: "<id>"       # for CGC-graded FMV + census (Week 2-3)
