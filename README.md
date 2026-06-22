@@ -5,8 +5,54 @@ cards (Pokémon, One Piece, Dragon Ball, Magic, sports) and comics. It snapshots
 daily into a time-series database, computes "hottest movers" momentum metrics, and feeds
 pre-aggregated structured data to an LLM for buy/hold/avoid decisions.
 
-> **Status:** Design phase. No application code yet — this repo currently holds the
-> architecture and decision records that the implementation will follow.
+> **Status:** Week-1 spine implemented. The TimescaleDB schema, a rate-governed ETL
+> pipeline with idempotent upserts, a watchlist loader, and an offline demo source are in
+> place and runnable. Real vendor sources (PriceCharting, Scrydex, GoCollect, …) land next.
+
+## Quick start
+
+```bash
+# 1. Database (Postgres 16 + TimescaleDB)
+docker compose up -d db
+
+# 2. Python env + install (kept inside a virtualenv)
+python -m venv .venv && . .venv/bin/activate
+pip install -e ".[dev]"
+
+# 3. Configure
+cp .env.example .env                 # adjust DATABASE_URL if needed
+cp watchlist.example.yaml watchlist.yaml
+
+# 4. Run the pipeline
+ccm migrate            # apply DB migrations (creates the hypertable)
+ccm sync-watchlist     # create items + cross-source id crosswalk
+ccm snapshot           # fetch current prices (default source: stub) and upsert
+ccm show               # print the latest snapshot per item
+
+# Tests (no database required)
+pytest
+```
+
+The default `stub` source needs no API key and generates deterministic demo prices, so the
+pipeline runs end-to-end and starts accruing history immediately. Run `ccm snapshot` daily
+(systemd timer or cron) — see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §4.
+
+## Layout
+
+```
+db/migrations/        SQL migrations (001 = items, crosswalk, price_snapshots hypertable)
+src/card_comic_monitor/
+  config.py           settings from env/.env
+  db.py               connection helper
+  models.py           PriceSnapshot, WatchlistItem, FetchTarget
+  ratelimit.py        token-bucket governor (per-source documented limits)
+  watchlist.py        YAML watchlist loader
+  repository.py       identity resolution + idempotent snapshot upserts
+  migrate.py          forward-only migration runner
+  sources/            one worker per vendor (base + stub; real vendors next)
+  cli.py              `ccm` entrypoint
+tests/                unit tests (rate limiter, watchlist, stub source)
+```
 
 ## Documentation
 
