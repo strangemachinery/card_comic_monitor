@@ -55,6 +55,44 @@ ORDER  BY pct_change DESC
 """
 
 
+_MARKET_SQL = """
+WITH latest AS (
+    SELECT DISTINCT ON (product_id, source, sub_type)
+           product_id, source, sub_type, name, set_name, game,
+           market_cents AS end_cents
+    FROM   market_snapshots
+    WHERE  market_cents IS NOT NULL
+      AND  source = ANY(%(sources)s)
+    ORDER  BY product_id, source, sub_type, time DESC
+),
+anchor AS (
+    SELECT DISTINCT ON (product_id, source, sub_type)
+           product_id, source, sub_type,
+           market_cents AS start_cents
+    FROM   market_snapshots
+    WHERE  time          <= now() - %(lookback)s
+      AND  market_cents   IS NOT NULL
+      AND  source = ANY(%(sources)s)
+    ORDER  BY product_id, source, sub_type, time DESC
+)
+SELECT l.name,
+       l.set_name,
+       l.game,
+       l.source,
+       l.sub_type,
+       a.start_cents,
+       l.end_cents,
+       round(
+           (l.end_cents - a.start_cents)::numeric / a.start_cents * 100,
+       1) AS pct_change
+FROM   latest  l
+JOIN   anchor  a USING (product_id, source, sub_type)
+WHERE  l.end_cents >= %(min_cents)s
+ORDER  BY pct_change DESC
+LIMIT  %(limit)s
+"""
+
+
 @dataclass
 class MoverRow:
     title: str
@@ -62,6 +100,49 @@ class MoverRow:
     start_cents: int
     end_cents: int
     pct_change: float
+
+
+@dataclass
+class MarketMoverRow:
+    name: str
+    set_name: str
+    game: str
+    source: str
+    sub_type: str
+    start_cents: int
+    end_cents: int
+    pct_change: float
+
+
+def query_market_movers(
+    conn,
+    period: str,
+    *,
+    sources: tuple[str, ...] = ("tcgcsv",),
+    min_cents: int = 100,
+    limit: int = 50,
+) -> list[MarketMoverRow]:
+    """Return market-wide movers from the discovery feed sorted by % change.
+
+    Args:
+        period: one of the PERIODS keys.
+        sources: which discovery sources to include.
+        min_cents: skip products below this price at both endpoints.
+        limit: maximum number of rows returned.
+    """
+    if period not in PERIODS:
+        known = ", ".join(PERIODS)
+        raise ValueError(f"unknown period {period!r}; choose from: {known}")
+    rows = conn.execute(
+        _MARKET_SQL,
+        {
+            "lookback":  PERIODS[period],
+            "sources":   list(sources),
+            "min_cents": min_cents,
+            "limit":     limit,
+        },
+    ).fetchall()
+    return [MarketMoverRow(*r) for r in rows]
 
 
 def query_movers(

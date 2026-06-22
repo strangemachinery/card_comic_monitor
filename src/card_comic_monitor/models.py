@@ -33,6 +33,25 @@ class FetchTarget:
 
 
 @dataclass
+class MarketSnapshot:
+    """One price observation for a product from the whole-catalog discovery feed.
+
+    Unlike PriceSnapshot, this has no FK to items — it covers every product
+    in the source's catalog, not just the curated watchlist.
+    """
+
+    product_id: str
+    source: str
+    game: str
+    name: str
+    set_name: str
+    sub_type: str
+    market_cents: int | None
+    low_cents: int | None = None
+    time: datetime | None = None
+
+
+@dataclass
 class WatchlistItem:
     """A logical collectible to track, with its per-source native ids."""
 

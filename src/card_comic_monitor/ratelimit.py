@@ -22,6 +22,8 @@ SOURCE_RATE_LIMITS: dict[str, tuple[float, float]] = {
     # tcgapi.dev free tier: 100 requests/day (the bulk endpoint covers many
     # cards per call, so a curated watchlist uses only a few).
     "tcgapi": (100.0, 100.0 / 86_400.0),
+    # tcgcsv.com: free, no auth, but be a polite citizen — 2 req/s.
+    "tcgcsv": (100.0, 2.0),
     # GoCollect Pro: ~100 calls/day  ->  100 / 86400 s.
     "gocollect": (100.0, 100.0 / 86_400.0),
     # Free TCG tiers: ~100 requests/day.

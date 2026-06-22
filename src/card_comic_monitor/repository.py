@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import psycopg
 from psycopg.types.json import Jsonb
 
-from .models import FetchTarget, PriceSnapshot, WatchlistItem
+from .models import FetchTarget, MarketSnapshot, PriceSnapshot, WatchlistItem
 
 
 def utc_day(when: datetime | None = None) -> datetime:
@@ -101,6 +101,50 @@ ON CONFLICT (time, item_id, source, condition, grade) DO UPDATE SET
     high_cents   = EXCLUDED.high_cents,
     volume       = EXCLUDED.volume
 """
+
+
+UPSERT_MARKET_SNAPSHOT = """
+INSERT INTO market_snapshots
+    (time, source, product_id, sub_type, game, name, set_name, market_cents, low_cents)
+VALUES
+    (%(time)s, %(source)s, %(product_id)s, %(sub_type)s,
+     %(game)s, %(name)s, %(set_name)s, %(market_cents)s, %(low_cents)s)
+ON CONFLICT (time, source, product_id, sub_type) DO UPDATE SET
+    game         = EXCLUDED.game,
+    name         = EXCLUDED.name,
+    set_name     = EXCLUDED.set_name,
+    market_cents = EXCLUDED.market_cents,
+    low_cents    = EXCLUDED.low_cents
+"""
+
+
+def upsert_market_snapshots(
+    conn: psycopg.Connection,
+    snapshots: list[MarketSnapshot],
+    *,
+    day: datetime | None = None,
+) -> int:
+    """Idempotently upsert market-wide discovery snapshots; returns row count."""
+    day = day or utc_day()
+    params = [
+        {
+            "time": s.time or day,
+            "source": s.source,
+            "product_id": s.product_id,
+            "sub_type": s.sub_type,
+            "game": s.game,
+            "name": s.name,
+            "set_name": s.set_name,
+            "market_cents": s.market_cents,
+            "low_cents": s.low_cents,
+        }
+        for s in snapshots
+    ]
+    if not params:
+        return 0
+    with conn.cursor() as cur:
+        cur.executemany(UPSERT_MARKET_SNAPSHOT, params)
+    return len(params)
 
 
 def upsert_snapshots(

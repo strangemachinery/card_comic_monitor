@@ -7,6 +7,7 @@ from .base import Source
 from .pricecharting import PricechartingSource
 from .stub import StubSource
 from .tcgapi import TcgapiSource
+from .tcgcsv import TcgcsvSource
 
 # Registry of available sources. Real vendors are added here as implemented.
 # tcgapi (cards) is the recommended default; gocollect (comics) is next.
@@ -15,6 +16,7 @@ _FACTORIES: dict[str, type[Source]] = {
     StubSource.name: StubSource,
     TcgapiSource.name: TcgapiSource,
     PricechartingSource.name: PricechartingSource,
+    TcgcsvSource.name: TcgcsvSource,
 }
 
 
