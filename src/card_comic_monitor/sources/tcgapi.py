@@ -30,7 +30,7 @@ from .base import Source
 
 logger = logging.getLogger(__name__)
 
-_BULK_URL = "https://tcgapi.dev/v1/bulk/resolve/tcgplayer"
+_BULK_URL = "https://api.tcgapi.dev/v1/bulk/resolve/tcgplayer"
 
 # Max TCGplayer product ids per bulk request (chunked to be safe).
 _BATCH_SIZE = 100
