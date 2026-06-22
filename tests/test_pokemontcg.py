@@ -124,6 +124,15 @@ def test_discover_handles_card_without_tcgplayer(mock_urlopen):
 
 
 @patch("urllib.request.urlopen")
+def test_discover_sends_user_agent(mock_urlopen):
+    mock_urlopen.return_value = _make_response(_page([], total=0))
+    list(_src().discover())
+    req = mock_urlopen.call_args[0][0]
+    ua = req.get_header("User-agent")
+    assert ua and "card-comic-monitor" in ua
+
+
+@patch("urllib.request.urlopen")
 def test_discover_sends_api_key_header_when_set(mock_urlopen):
     mock_urlopen.return_value = _make_response(_page([], total=0))
     list(_src(api_key="secret").discover())

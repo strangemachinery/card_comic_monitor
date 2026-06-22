@@ -60,7 +60,10 @@ class PokemontcgSource:
             f"{_BASE_URL}?page={page}&pageSize={_PAGE_SIZE}"
             f"&select={_SELECT}"
         )
-        req = urllib.request.Request(url)
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "card-comic-monitor/1.0 (+github.com/strangemachinery/card_comic_monitor)"},
+        )
         if self.api_key:
             req.add_header("X-Api-Key", self.api_key)
         try:
