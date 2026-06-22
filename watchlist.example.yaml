@@ -1,0 +1,44 @@
+# Curated watchlist. Copy to watchlist.yaml and edit.
+#
+# Each item is one logical collectible with per-source native ids under
+# `sources`. The `stub` ids are arbitrary strings that drive the offline demo
+# source; real ids (e.g. a PriceCharting product id) go alongside as you wire
+# up vendors. Keeping this list small respects tight API quotas (e.g. GoCollect
+# Pro ~100 calls/day) — see docs/DECISIONS.md.
+
+items:
+  - title: "Charizard"
+    kind: card
+    game: pokemon
+    set_name: "Base Set"
+    number: "4/102"
+    variant: "Unlimited Holo"
+    sources:
+      stub: "demo-pokemon-charizard-base-unlimited"
+      # pricecharting: "6910"
+
+  - title: "Monkey D. Luffy (Leader)"
+    kind: card
+    game: one_piece
+    set_name: "Romance Dawn (OP-01)"
+    number: "OP01-001"
+    sources:
+      stub: "demo-onepiece-luffy-op01-001"
+
+  - title: "Son Goku"
+    kind: card
+    game: dragon_ball
+    set_name: "Fusion World (FB-01)"
+    number: "FB01-001"
+    sources:
+      stub: "demo-dragonball-goku-fb01-001"
+
+  - title: "The Amazing Spider-Man"
+    kind: comic
+    set_name: "The Amazing Spider-Man (1963)"
+    number: "300"
+    variant: "First full Venom"
+    is_key_issue: true
+    sources:
+      stub: "demo-comic-asm-300-cgc98"
+      # gocollect: "12345"
