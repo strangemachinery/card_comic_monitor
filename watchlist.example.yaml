@@ -22,26 +22,25 @@ items:
     variant: "Unlimited Holo"
     sources:
       stub: "demo-pokemon-charizard-base-unlimited"
-      # tcgapi: "<tcgplayer-product-id>"   # e.g. from tcgplayer.com/product/<ID>
-      # pricecharting: "6910"
+      tcgapi: "42382"       # tcgplayer.com/product/42382 — Base Set Unlimited
 
   - title: "Monkey D. Luffy (Leader)"
     kind: card
     game: one_piece
     set_name: "Romance Dawn (OP-01)"
-    number: "OP01-001"
+    number: "OP01-003"      # OP01-001 is Zoro; Luffy Leader is OP01-003
     sources:
-      stub: "demo-onepiece-luffy-op01-001"
-      # tcgapi: "<tcgplayer-product-id>"
+      stub: "demo-onepiece-luffy-op01-003"
+      tcgapi: "454515"      # tcgplayer.com/product/454515
 
   - title: "Son Goku"
     kind: card
     game: dragon_ball
-    set_name: "Fusion World (FB-01)"
+    set_name: "Awakened Pulse (FB-01)"
     number: "FB01-001"
     sources:
       stub: "demo-dragonball-goku-fb01-001"
-      # tcgapi: "<tcgplayer-product-id>"
+      tcgapi: "536821"      # tcgplayer.com/product/536821
 
   - title: "The Amazing Spider-Man"
     kind: comic
