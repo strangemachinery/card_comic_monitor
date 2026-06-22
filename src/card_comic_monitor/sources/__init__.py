@@ -6,11 +6,14 @@ from ..ratelimit import limiter_for
 from .base import Source
 from .pricecharting import PricechartingSource
 from .stub import StubSource
+from .tcgapi import TcgapiSource
 
 # Registry of available sources. Real vendors are added here as implemented.
-# scrydex and gocollect are next (Week 2-3).
+# tcgapi (cards) is the recommended default; gocollect (comics) is next.
+# pricecharting is kept as an opt-in option (its API needs a pricier tier).
 _FACTORIES: dict[str, type[Source]] = {
     StubSource.name: StubSource,
+    TcgapiSource.name: TcgapiSource,
     PricechartingSource.name: PricechartingSource,
 }
 

@@ -4,10 +4,11 @@
 # `sources`. The `stub` ids drive the offline demo source (no key needed).
 # Wire in real ids alongside them as you activate each vendor.
 #
-# Finding PriceCharting product ids:
-#   Search for your item on pricecharting.com; the id is the number in the URL,
-#   e.g. https://www.pricecharting.com/game/pokemon/charizard#... → id is "6910"
-#   via the API: GET https://www.pricecharting.com/api/products?q=charizard+base&t=TOKEN
+# tcgapi (recommended card source): native id = the TCGplayer product id.
+#   Find it in the tcgplayer.com product URL (.../product/<ID>/...), or in the
+#   free TCGCSV mirror (https://tcgcsv.com). Most card APIs key on this id.
+#
+# pricecharting (opt-in): native id = pricecharting.com product id (URL number).
 #
 # Keeping this list small respects tight API quotas (GoCollect Pro ~100/day).
 # See docs/DECISIONS.md for the full quota breakdown.
@@ -21,7 +22,8 @@ items:
     variant: "Unlimited Holo"
     sources:
       stub: "demo-pokemon-charizard-base-unlimited"
-      pricecharting: "6910"   # https://www.pricecharting.com/game/pokemon/charizard
+      # tcgapi: "<tcgplayer-product-id>"   # e.g. from tcgplayer.com/product/<ID>
+      # pricecharting: "6910"
 
   - title: "Monkey D. Luffy (Leader)"
     kind: card
@@ -30,7 +32,7 @@ items:
     number: "OP01-001"
     sources:
       stub: "demo-onepiece-luffy-op01-001"
-      # pricecharting: "<id>"  # look up on pricecharting.com
+      # tcgapi: "<tcgplayer-product-id>"
 
   - title: "Son Goku"
     kind: card
@@ -39,7 +41,7 @@ items:
     number: "FB01-001"
     sources:
       stub: "demo-dragonball-goku-fb01-001"
-      # pricecharting: "<id>"
+      # tcgapi: "<tcgplayer-product-id>"
 
   - title: "The Amazing Spider-Man"
     kind: comic
@@ -49,5 +51,4 @@ items:
     is_key_issue: true
     sources:
       stub: "demo-comic-asm-300-cgc98"
-      # pricecharting: "<id>"   # comics are covered by the same token
-      # gocollect: "<id>"       # for CGC-graded FMV + census (Week 2-3)
+      # gocollect: "<id>"   # comics: CGC-graded FMV + census (Week 2-3)
