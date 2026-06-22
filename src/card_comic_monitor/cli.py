@@ -65,11 +65,11 @@ def cmd_snapshot(args, settings) -> int:
 
 def cmd_show(args, settings) -> int:
     query = """
-        SELECT DISTINCT ON (i.item_id)
+        SELECT DISTINCT ON (i.item_id, ps.source)
                i.title, ps.source, ps.grade, ps.market_cents, ps.time
         FROM price_snapshots ps
         JOIN items i ON i.item_id = ps.item_id
-        ORDER BY i.item_id, ps.time DESC
+        ORDER BY i.item_id, ps.source, ps.time DESC
     """
     with connect(settings) as conn:
         rows = conn.execute(query).fetchall()
