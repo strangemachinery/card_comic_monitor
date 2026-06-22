@@ -118,7 +118,7 @@ def query_market_movers(
     conn,
     period: str,
     *,
-    sources: tuple[str, ...] = ("tcgcsv",),
+    sources: tuple[str, ...] = ("pokemontcg", "tcgcsv"),
     min_cents: int = 100,
     limit: int = 50,
 ) -> list[MarketMoverRow]:

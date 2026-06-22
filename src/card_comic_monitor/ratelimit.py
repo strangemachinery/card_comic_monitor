@@ -24,6 +24,8 @@ SOURCE_RATE_LIMITS: dict[str, tuple[float, float]] = {
     "tcgapi": (100.0, 100.0 / 86_400.0),
     # tcgcsv.com: free, no auth, but be a polite citizen — 2 req/s.
     "tcgcsv": (100.0, 2.0),
+    # api.pokemontcg.io: free tier ~20k/day with a key. Cap bursts at 5 req/s.
+    "pokemontcg": (10.0, 5.0),
     # GoCollect Pro: ~100 calls/day  ->  100 / 86400 s.
     "gocollect": (100.0, 100.0 / 86_400.0),
     # Free TCG tiers: ~100 requests/day.

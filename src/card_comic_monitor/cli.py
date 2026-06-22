@@ -21,8 +21,19 @@ from .db import connect
 from .migrate import run_migrations
 from .movers import PERIODS, MarketMoverRow, query_market_movers, query_movers
 from .repository import ensure_item, targets_for_source, upsert_market_snapshots, upsert_snapshots
+from .ratelimit import limiter_for
+from .sources.pokemontcg import PokemontcgSource
 from .sources.tcgcsv import CATEGORY_IDS, TcgcsvSource
 from .sources import available_sources, build_source
+
+# Discovery sources: bulk catalog scanners feeding market_snapshots.
+# pokemontcg is the working default; tcgcsv is kept for if/when it returns.
+_DISCOVERY_SOURCES = {
+    "pokemontcg": lambda args: PokemontcgSource(limiter=limiter_for("pokemontcg")),
+    "tcgcsv": lambda args: TcgcsvSource(
+        limiter=limiter_for("tcgcsv"), categories=args.games or None
+    ),
+}
 from .watchlist import load_watchlist
 
 logger = logging.getLogger("card_comic_monitor")
@@ -89,9 +100,7 @@ def cmd_show(args, settings) -> int:
 
 
 def cmd_discover(args, settings) -> int:
-    games = args.games or list(CATEGORY_IDS)
-    from .ratelimit import limiter_for
-    src = TcgcsvSource(limiter=limiter_for("tcgcsv"), categories=games)
+    src = _DISCOVERY_SOURCES[args.source](args)
     total = 0
     batch: list = []
     BATCH_SIZE = 500
@@ -103,7 +112,7 @@ def cmd_discover(args, settings) -> int:
                 batch.clear()
         if batch:
             total += upsert_market_snapshots(conn, batch)
-    print(f"Discovered {total} market snapshot(s) across {len(games)} game(s).")
+    print(f"Discovered {total} market snapshot(s) via {args.source}.")
     return 0
 
 
@@ -193,7 +202,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p_disc = sub.add_parser(
-        "discover", help="bulk-scan whole TCGplayer catalog via tcgcsv.com"
+        "discover", help="bulk-scan a game catalog into market_snapshots"
+    )
+    p_disc.add_argument(
+        "--source", "-s",
+        default="pokemontcg",
+        choices=list(_DISCOVERY_SOURCES),
+        help="discovery source (default: pokemontcg; tcgcsv is currently down)",
     )
     p_disc.add_argument(
         "--game",
@@ -201,7 +216,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         choices=list(CATEGORY_IDS),
         metavar="GAME",
-        help=f"limit to this game (repeatable); choices: {', '.join(CATEGORY_IDS)}",
+        help="(tcgcsv only) limit to this game; repeatable",
     )
     p_disc.set_defaults(func=cmd_discover)
 
